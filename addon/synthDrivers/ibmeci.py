@@ -97,6 +97,71 @@ langsAnnotations={
 	"fi_FI":b"`l9.0"
 }
 
+IPA_TO_IBMECI_FRA = {
+	'a': 'a', # pattes, lac, cave
+	'e': 'e', # café, déformer, été
+	'ɛ': 'E', # père, annuaire, mer
+	'i': 'i', # film, type, rythmique
+	'o': 'o', # paule, tôt, eaux
+	'ɔ': 'c', # paul, note, échalotte
+	'u': 'u', # roue, où, août, tour
+	'y': 'y', # utile, pure, Bruno
+	'ə': 'x', # litres, marbre
+	'ø': "'eu'", # peu, jeûner, émeute
+	'œ': "'oe'", # peur, jeune, déjeuner
+	'ɑ̃': "'a~'", # banc, en, temps
+	'ɛ̃': "'E~'", # fin, plein, faim
+	'ɔ̃': "'o~'", # bon, pont, mon
+	'b': 'b', # bébé, balle, robe
+	'p': 'p', # porte, prêt, guêpe
+	'd': 'd', # dort, dolmen, addition
+	't': 't', # ton, patte, théâtre
+	'ɡ': 'g', # guerre, bague, garer
+	'k': 'k', # kilo, caler, quai
+	'v': 'v', # laver, wagon, visiter
+	'f': 'f', # chef, faim, phare
+	'z': 'z', # jaser, réseau, zigzaguer
+	's': 's', # sans, ambition, façon
+	'ʒ': 'Z', # rage, gîte, jouer
+	'ʃ': 'S', # cheval, lâche, schéma
+	'm': 'm', # maman, femme, mettre
+	'n': 'n', # Anne, ni, anonyme
+	'ɲ': "'nj'", # agneau, campagne
+	'ŋ': "'ng'", # parking, camping
+	'ʁ': 'r', # parer, rare, carreau
+	'l': 'l', # litre, illisible, pâle
+	'j': 'j', # hiérarchie, paille, yéyé
+	'w': 'w', # oui, moi, voilà
+	'ɥ': 'H', # lui, nuit, nuée
+	'ˈ': '1', # primary stress (most prominent stress in the word)
+	'ˌ': '2', # secondary stress
+	'.': '.', # (period) beginning of a syllable
+	'‿': '_', # (underscore character) allow liaison if the following word begins with a vowel.
+	' ': ' ',
+}
+
+IPA_TO_IBMECI_FRC = IPA_TO_IBMECI_FRA.copy()
+IPA_TO_IBMECI_FRC.update({
+	'ɑ': 'A', # (frc) char, bois, mâle
+	'ɪ': 'I', # (frc) site, plastique, ride
+	'ʊ': 'U', # (frc) foule, mousse
+	'ʏ': 'Y', # (frc) autobus, chute
+	'ɑː': "'a:'", # (frc) voyage, information
+	'eː': "'e:'", # (frc) steak (anglicismes)
+	'ɛː': "'E:'", # (frc) père, annuaire, fête
+	#'iː': "'i:'", # (frc) Not provided in doc; rive
+	'oː': "'o:'", # (frc) paule, beau, tôt, côté
+	'ɔː': "'c:'", # (frc) loge, encore
+	'uː': "'u:'", # (frc) four, douze
+	'yː': "'y:'", # (frc) dur, buse
+	'œ̃': "'oe~'", # (frc) un, aucun
+	#'': 'D', # (frc) duque, dire
+	#'': 'T', # (frc) petit, tuque
+	#'': 'J', # (frc) jeans, jogging
+	#'': 'C', # (frc) gaucho, gaspacho
+})
+
+
 class SynthDriver(synthDriverHandler.SynthDriver):
 	supportedSettings=(SynthDriver.VoiceSetting(), SynthDriver.VariantSetting(), SynthDriver.RateSetting(),
 		BooleanDriverSetting("rateBoost", _("Rate boos&t"), True),
@@ -112,7 +177,8 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 		speech.BreakCommand,
 		speech.PitchCommand,
 		speech.RateCommand,
-		speech.VolumeCommand
+		speech.VolumeCommand,
+		speech.PhonemeCommand,
 	}
 	supportedNotifications = {synthIndexReached, synthDoneSpeaking}
 
@@ -139,7 +205,15 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 		speech.VolumeCommand: ECIVoiceParam.eciVolume,
 		speech.RateCommand: ECIVoiceParam.eciSpeed,
 	}
-
+	
+	IPA_TO_IBMECI = {
+		u"θ": u"T",
+		u"s": u"s",
+		u"ˈ": u"'",
+	}
+	
+	IPA_TO_IBMECI = IPA_TO_IBMECI_FRC
+	
 	def speak(self,speechSequence):
 		last = None
 		defaultLanguage=self.language
@@ -167,6 +241,17 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 				outlist.append((_ibmeci.speak, (b"`ts1" if item.state else b"`ts0",)))
 			elif isinstance(item,speech.BreakCommand):
 				outlist.append((_ibmeci.speak, (b' `p%d ' %item.time,)))
+			elif isinstance(item,speech.PhonemeCommand):
+				# We can't use str.translate because we want to reject unknown characters.
+				try:
+					phonemes = "".join([self.IPA_TO_IBMECI[char] for char in generatePhonemeList(item.ipa)])
+					s = b" `[%s] " % phonemes.encode('mbcs')
+					outlist.append((_ibmeci.speak, (s,)))
+				except KeyError:
+					log.debugWarning("Unknown character in IPA string: %s"%item.ipa)
+					if item.text:
+						s = self.processText(unicode(item.text))
+						outlist.append((_ibmeci.speak, (s,)))
 			elif type(item) in self.PROSODY_ATTRS:
 				val = max(0, min(item.newValue, 100))
 				if type(item) == speech.RateCommand: val = self.percentToRate(val)
@@ -191,15 +276,12 @@ class SynthDriver(synthDriverHandler.SynthDriver):
 		if _ibmeci.params[9] in (196609, 196608):
 			text = resub(french_fixes, text)
 			text = text.replace('quil', 'qil') #Sometimes this string make everything buggy with IBMTTS in French
+		#this converts to ansi for anticrash. If this breaks with foreign langs, we can remove it.
+		text = text.encode('mbcs', 'replace')
+		text = resub(anticrash_res, text)
 		if self._backquoteVoiceTags:
-			#this converts to ansi for anticrash. If this breaks with foreign langs, we can remove it.
-			text = text.replace('`', ' ').encode('mbcs', 'replace') #no embedded commands
 			text = b"`pp0 `vv%d %s" % (_ibmeci.getVParam(ECIVoiceParam.eciVolume), text)
-			text = resub(anticrash_res, text)
 		else:
-			#this converts to ansi for anticrash. If this breaks with foreign langs, we can remove it.
-			text = text.encode('mbcs', 'replace')
-			text = resub(anticrash_res, text)
 			text = b"`pp0 `vv%d %s" % (_ibmeci.getVParam(ECIVoiceParam.eciVolume), text.replace(b'`', b' ')) #no embedded commands
 		text = pause_re.sub(br'\1 `p1\2\3', text)
 		text = time_re.sub(br'\1:\2 \3', text)
@@ -328,3 +410,44 @@ def resub(dct, s):
 	for r in six.iterkeys(dct):
 		s = r.sub(dct[r], s)
 	return s
+	
+def generatePhonemeList(s):
+	s = moveStress(s)
+	return splitPhonemes(s)
+	
+def moveStress(s):
+	log.debug(s)
+	IPA_STRESSES = "ˈˌ"
+	IPA_VOCALS = "aeɛioɔuyøœɑ"
+	stress = r'[%s]' % IPA_STRESSES
+	vocal = r'[%s]' % IPA_VOCALS
+	notVocal = r'[^%s]' % IPA_VOCALS
+	# Move the stress before a vocal
+	s = re.sub(
+		r'({stress})({notVocal})({vocal})'.format(stress=stress, vocal=vocal, notVocal=notVocal),
+		r'\2\1\3',
+		s,
+	)
+	l = []
+	for word in s.split(' '):
+		# If primary stress not present in word, add it before last vocal
+		word = re.sub(
+			r'(\b[^ˈ]*)({vocal})({notVocal}*)'.format(vocal=vocal, notVocal=notVocal),
+			r'\1ˈ\2\3',
+			word,
+		)
+		l.append(word)
+	log.debug(''.join(l))
+	return ''.join(l)
+	
+def splitPhonemes(s):
+	combiningAPISymbols = ['ɑ̃'[1], 'ː']
+	cur = ''
+	for c in s:
+		if c in combiningAPISymbols:
+			cur = cur + c
+		else:
+			if cur != '': yield cur
+			cur = c
+	yield cur
+
